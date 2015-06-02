@@ -22,7 +22,7 @@ a key-value based udp for nginx report module
     
         [...]
         report_tag  $host;
-        access_report 127.0.0.1:8000 nginx_report;  # report_server ip:port
+        access_report 127.0.0.1:8000 127.0.0.1:8001 127.0.0.1:8002 nginx_report;  # report_server ip1:port1 ip2:port2 ...... loadbalance for random(new feature)
         
         [...]
     }

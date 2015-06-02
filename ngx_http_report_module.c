@@ -1,4 +1,9 @@
 /*
+ * Copyright (C) 2015 fengpeiyuan@gmail.com
+ *
+ */
+
+/*
  * Copyright (C) 2014 blacktty
  *
  */
@@ -79,6 +84,8 @@ typedef struct {
     unsigned                     off;
     ngx_http_log_tag_template_t *tag;
 } ngx_http_report_conf_t;
+
+#define MAX_LOGS_NUM 10
 
 ngx_int_t ngx_udp_connect(ngx_udp_connection_t *uc);
 
@@ -206,7 +213,15 @@ ngx_http_report_handler(ngx_http_request_t *r)
 
     log = flcf->logs->elts;
 
-    for (l = 0; l < flcf->logs->nelts; l++) {
+    /**
+     * 1.send udp package to every config servers(ip:port), so use loop
+     *for (l = 0; l < flcf->logs->nelts; l++) {
+     */
+
+    /**
+     * 2.send udp package to a specified config server(ip:port), use random to fetch which one to send
+     */
+     l = rand()%(flcf->logs->nelts);
 
 #if defined nginx_version && nginx_version >= 7018
         ngx_http_script_flush_no_cacheable_variables(r, log[l].format->flushes);
@@ -229,13 +244,13 @@ ngx_http_report_handler(ngx_http_request_t *r)
         if (line == NULL) {
             return NGX_ERROR;
         }
-	p = ngx_sprintf(line, "tag=%V&", &tag);
+        p = ngx_sprintf(line, "tag=%V&", &tag);
         for (i = 0; i < log[l].format->ops->nelts; i++) {
             p = op[i].run(r, p, &op[i]);
         }
-	//printf("%s\n",line);
+
         ngx_http_report_send(log[l].endpoint, line, p - line);
-    }
+  //  }
 
     return NGX_OK;
 }
@@ -438,19 +453,29 @@ ngx_http_report_set_log(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
     ngx_http_report_conf_t     *flcf = conf;
 
-    ngx_uint_t                      i;
+    ngx_uint_t                      i,j;
     ngx_str_t                      *value, name;
     ngx_http_report_t             *log;
     ngx_http_log_fmt_t             *fmt;
     ngx_http_log_main_conf_t       *lmcf;
     ngx_http_report_main_conf_t   *fmcf;
     ngx_url_t                       u;
+    ngx_uint_t                      args_num;
+
 
     value = cf->args->elts;
 
     if (ngx_strcmp(value[1].data, "off") == 0) {
         flcf->off = 1;
         return NGX_CONF_OK;
+    }
+
+    args_num = cf->args->nelts;
+    ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "#args_num:%d ", args_num);
+
+    if(args_num>MAX_LOGS_NUM+2){
+    	ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,"servers(ip:port) config in access_report should be less than 10, plz modify!");
+    	return NGX_CONF_ERROR;
     }
 
     fmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_report_module);
@@ -463,7 +488,7 @@ ngx_http_report_set_log(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     }
 
     if (flcf->logs == NULL) {
-        flcf->logs = ngx_array_create(cf->pool, 2, sizeof(ngx_http_report_t));
+        flcf->logs = ngx_array_create(cf->pool, args_num, sizeof(ngx_http_report_t));
         if (flcf->logs == NULL) {
             return NGX_CONF_ERROR;
         }
@@ -477,56 +502,49 @@ ngx_http_report_set_log(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
         return NGX_CONF_ERROR;
     }
 
-    log = ngx_array_push(flcf->logs);
-    if (log == NULL) {
-        return NGX_CONF_ERROR;
+    for(i=1;i<args_num-1;i++){
+    	ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "#log url:%s",value[i].data);
+		log = ngx_array_push(flcf->logs);
+		if (log == NULL) {
+			return NGX_CONF_ERROR;
+		}
+
+		ngx_memzero(log, sizeof(ngx_http_report_t));
+		ngx_memzero(&u, sizeof(ngx_url_t));
+
+		u.url = value[i];
+		u.default_port = 8765;
+		u.no_resolve = 0;
+
+		if(ngx_parse_url(cf->pool, &u) != NGX_OK) {
+			ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "%V: %s", &u.host, u.err);
+			return NGX_CONF_ERROR;
+		}
+
+		log->endpoint = ngx_http_report_add_endpoint(cf, &u.addrs[0]);
+		if(log->endpoint == NULL) {
+			return NGX_CONF_ERROR;
+		}
+
+
+		if (ngx_strcmp(value[args_num-1].data, "combined") == 0) {
+				ngx_str_set(&name, "combined");
+				lmcf->combined_used = 1;
+		}else{
+				name = value[args_num-1];
+		}
+
+		fmt = lmcf->formats.elts;
+		for (j=0;j < lmcf->formats.nelts; j++) {
+			if (fmt[j].name.len == name.len && ngx_strcasecmp(fmt[j].name.data, name.data) == 0)
+			{
+				log->format = &fmt[j];
+				break;
+			}
+		}
+
     }
 
-    ngx_memzero(log, sizeof(ngx_http_report_t));
-
-    ngx_memzero(&u, sizeof(ngx_url_t));
-
-    u.url = value[1];
-    u.default_port = 8765;
-    u.no_resolve = 0;
-
-    if(ngx_parse_url(cf->pool, &u) != NGX_OK) {
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "%V: %s", &u.host, u.err);
-        return NGX_CONF_ERROR;
-    }
-
-    log->endpoint = ngx_http_report_add_endpoint(cf, &u.addrs[0]);
-
-    if(log->endpoint == NULL) {
-        return NGX_CONF_ERROR;
-    }
-
-    if (cf->args->nelts >= 3) {
-        name = value[2];
-
-        if (ngx_strcmp(name.data, "combined") == 0) {
-            lmcf->combined_used = 1;
-        }
-    } else {
-        ngx_str_set(&name, "combined");
-        lmcf->combined_used = 1;
-    }
-
-    fmt = lmcf->formats.elts;
-    for (i = 0; i < lmcf->formats.nelts; i++) {
-        if (fmt[i].name.len == name.len
-            && ngx_strcasecmp(fmt[i].name.data, name.data) == 0)
-        {
-            log->format = &fmt[i];
-            goto done;
-        }
-    }
-
-    ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                       "unknown log format \"%V\"", &name);
-    return NGX_CONF_ERROR;
-
-done:
 
     return NGX_CONF_OK;
 }
