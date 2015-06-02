@@ -108,7 +108,7 @@ static ngx_command_t  ngx_http_report_commands[] = {
 
     { ngx_string("access_report"),
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LIF_CONF
-                        |NGX_HTTP_LMT_CONF|NGX_CONF_TAKE123,
+                        |NGX_HTTP_LMT_CONF|NGX_CONF_1MORE,
       ngx_http_report_set_log,
       NGX_HTTP_LOC_CONF_OFFSET,
       0,
