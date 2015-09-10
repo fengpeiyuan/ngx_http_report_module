@@ -30,11 +30,9 @@ typedef ngx_addr_t ngx_report_addr_t;
 
 typedef struct ngx_http_log_op_s  ngx_http_log_op_t;
 
-typedef u_char *(*ngx_http_log_op_run_pt) (ngx_http_request_t *r, u_char *buf,
-    ngx_http_log_op_t *op);
+typedef u_char *(*ngx_http_log_op_run_pt) (ngx_http_request_t *r, u_char *buf,ngx_http_log_op_t *op);
 
-typedef size_t (*ngx_http_log_op_getlen_pt) (ngx_http_request_t *r,
-    uintptr_t data);
+typedef size_t (*ngx_http_log_op_getlen_pt) (ngx_http_request_t *r,uintptr_t data);
 
 
 struct ngx_http_log_op_s {
@@ -80,36 +78,31 @@ typedef struct {
 } ngx_http_report_main_conf_t;
 
 typedef struct {
-    ngx_array_t                 *logs;       /* array of ngx_http_report_t */
+    ngx_array_t                 *reports;       /* array of ngx_http_report_t */
     unsigned                     off;
     ngx_http_log_tag_template_t *tag;
-} ngx_http_report_conf_t;
+} ngx_http_report_loc_conf_t;
 
-#define MAX_LOGS_NUM 10
 
 ngx_int_t ngx_udp_connect(ngx_udp_connection_t *uc);
 
 static void ngx_report_cleanup(void *data);
 static ngx_int_t ngx_http_report_send(ngx_udp_endpoint_t *l, u_char *buf, size_t len);
-
 static void *ngx_http_report_create_main_conf(ngx_conf_t *cf);
 static char *ngx_http_report_init_main_conf(ngx_conf_t *cf, void *conf);
 static void *ngx_http_report_create_loc_conf(ngx_conf_t *cf);
-static char *ngx_http_report_merge_loc_conf(ngx_conf_t *cf, void *parent,
-    void *child);
-
-static char *ngx_http_report_set_log(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char *ngx_http_report_merge_loc_conf(ngx_conf_t *cf, void *parent,void *child);
+static char *ngx_http_report_set_report(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_http_report_set_tag(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
-
 static ngx_int_t ngx_http_report_init(ngx_conf_t *cf);
 
 
 static ngx_command_t  ngx_http_report_commands[] = {
 
-    { ngx_string("access_report"),
+    { ngx_string("report"),
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LIF_CONF
                         |NGX_HTTP_LMT_CONF|NGX_CONF_1MORE,
-      ngx_http_report_set_log,
+      ngx_http_report_set_report,
       NGX_HTTP_LOC_CONF_OFFSET,
       0,
       NULL },
@@ -131,7 +124,7 @@ static ngx_command_t  ngx_http_report_commands[] = {
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
       ngx_http_report_set_tag,
       NGX_HTTP_LOC_CONF_OFFSET,
-      offsetof(ngx_http_report_conf_t, tag),
+      offsetof(ngx_http_report_loc_conf_t, tag),
       NULL },
 
       ngx_null_command
@@ -176,63 +169,57 @@ ngx_http_report_handler(ngx_http_request_t *r)
     size_t                    len;
     ngx_uint_t                i, l;
     ngx_str_t                 tag;
-    ngx_http_report_t       *log;
+    ngx_http_report_t       *reports;
     ngx_http_log_op_t        *op;
-    ngx_http_report_conf_t  *flcf;
+    ngx_http_report_loc_conf_t  *flcf;
     ngx_http_report_main_conf_t *fmcf;
 
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "http report handler");
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,"http report handler");
 
     flcf = ngx_http_get_module_loc_conf(r, ngx_http_report_module);
     fmcf = ngx_http_get_module_main_conf(r, ngx_http_report_module);
 
-    if(flcf->off || flcf->logs == NULL) {
+    if(flcf->off || flcf->reports == NULL) {
         return NGX_OK;
     }
     if (rand() % fmcf->rate >= 1) {
         return NGX_OK;
     }
 
-    if(flcf->tag != NULL)
-    {
+    if(flcf->tag != NULL){
         if(flcf->tag->lengths == NULL) {
             tag = flcf->tag->value;
         }
         else{
-            if (ngx_http_script_run(r, &tag, flcf->tag->lengths->elts, 0, flcf->tag->values->elts)
-                == NULL)
-            {
+            if (ngx_http_script_run(r, &tag, flcf->tag->lengths->elts, 0, flcf->tag->values->elts) == NULL) {
                 return NGX_ERROR;
             }
         }
-    }
-    else {
+    }else {
         ngx_str_set(&tag, "nginx");
     }
 
-    log = flcf->logs->elts;
+    reports = flcf->reports->elts;
 
     /**
      * 1.send udp package to every config servers(ip:port), so use loop
-     *for (l = 0; l < flcf->logs->nelts; l++) {
+     *for (l = 0; l < flcf->reports->nelts; l++) {
      */
 
     /**
      * 2.send udp package to a specified config server(ip:port), use random to fetch which one to send
      */
-     l = rand()%(flcf->logs->nelts);
+     l = rand()%(flcf->reports->nelts);
 
 #if defined nginx_version && nginx_version >= 7018
-        ngx_http_script_flush_no_cacheable_variables(r, log[l].format->flushes);
+        ngx_http_script_flush_no_cacheable_variables(r, reports[l].format->flushes);
 #endif
 
         len = 0;
-        op = log[l].format->ops->elts;
-        for (i = 0; i < log[l].format->ops->nelts; i++) {
+        op = reports[l].format->ops->elts;
+        for (i = 0; i < reports[l].format->ops->nelts; i++) {
             if (op[i].len == 0) {
                 len += op[i].getlen(r, op[i].data);
-
             } else {
                 len += op[i].len;
             }
@@ -245,12 +232,11 @@ ngx_http_report_handler(ngx_http_request_t *r)
             return NGX_ERROR;
         }
         p = ngx_sprintf(line, "tag=%V&", &tag);
-        for (i = 0; i < log[l].format->ops->nelts; i++) {
+        for (i = 0; i < reports[l].format->ops->nelts; i++) {
             p = op[i].run(r, p, &op[i]);
         }
 
-        ngx_http_report_send(log[l].endpoint, line, p - line);
-  //  }
+        ngx_http_report_send(reports[l].endpoint, line, p - line);
 
     return NGX_OK;
 }
@@ -308,9 +294,6 @@ ngx_report_cleanup(void *data)
     }
 }
 
-static void ngx_http_report_dummy_handler(ngx_event_t *ev)
-{
-}
 
 static ngx_int_t
 ngx_http_report_send(ngx_udp_endpoint_t *l, u_char *buf, size_t len)
@@ -387,9 +370,9 @@ ngx_http_report_init_main_conf(ngx_conf_t *cf, void *conf)
 static void *
 ngx_http_report_create_loc_conf(ngx_conf_t *cf)
 {
-    ngx_http_report_conf_t  *conf;
+    ngx_http_report_loc_conf_t  *conf;
 
-    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_report_conf_t));
+    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_report_loc_conf_t));
     if (conf == NULL) {
         return NULL;
     }
@@ -400,18 +383,18 @@ ngx_http_report_create_loc_conf(ngx_conf_t *cf)
 static char *
 ngx_http_report_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 {
-    ngx_http_report_conf_t *prev = parent;
-    ngx_http_report_conf_t *conf = child;
+    ngx_http_report_loc_conf_t *prev = parent;
+    ngx_http_report_loc_conf_t *conf = child;
 
     if(conf->tag == NULL) {
         conf->tag = prev->tag;
     }
 
-    if(conf->logs || conf->off) {
+    if(conf->reports || conf->off) {
         return NGX_CONF_OK;
     }
 
-    conf->logs = prev->logs;
+    conf->reports = prev->reports;
     conf->off = prev->off;
 
     return NGX_CONF_OK;
@@ -433,8 +416,7 @@ ngx_http_report_add_endpoint(ngx_conf_t *cf, ngx_report_addr_t *peer_addr)
     }
 
     if (fmcf->endpoints->nelts > fmcf->collector_max) {
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                           "report collector count out of range, increase the report_collector_max");
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,"report collector count out of range, increase the report_collector_max");
         return NULL;
     }
 
@@ -449,9 +431,9 @@ ngx_http_report_add_endpoint(ngx_conf_t *cf, ngx_report_addr_t *peer_addr)
 }
 
 static char *
-ngx_http_report_set_log(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+ngx_http_report_set_report(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
-    ngx_http_report_conf_t     *flcf = conf;
+    ngx_http_report_loc_conf_t     *flcf = conf;
 
     ngx_uint_t                      i,j;
     ngx_str_t                      *value, name;
@@ -470,13 +452,6 @@ ngx_http_report_set_log(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
         return NGX_CONF_OK;
     }
 
-    args_num = cf->args->nelts;
-    ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "#args_num:%d ", args_num);
-
-    if(args_num>MAX_LOGS_NUM+2){
-    	ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,"servers(ip:port) config in access_report should be less than 10, plz modify!");
-    	return NGX_CONF_ERROR;
-    }
 
     fmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_report_module);
 
@@ -487,9 +462,17 @@ ngx_http_report_set_log(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
         fmcf->rate= 10;
     }
 
-    if (flcf->logs == NULL) {
-        flcf->logs = ngx_array_create(cf->pool, args_num, sizeof(ngx_http_report_t));
-        if (flcf->logs == NULL) {
+    args_num = cf->args->nelts;
+    ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "#args_num:%d ", args_num);
+
+    if(args_num>fmcf->collector_max+2){
+       	ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,"servers(ip:port) in report should be less than %d, plz modify number of servers or increase report_collector_max!",fmcf->collector_max);
+       	return NGX_CONF_ERROR;
+    }
+
+    if (flcf->reports == NULL) {
+        flcf->reports = ngx_array_create(cf->pool, args_num, sizeof(ngx_http_report_t));
+        if (flcf->reports == NULL) {
             return NGX_CONF_ERROR;
         }
     }
@@ -497,14 +480,13 @@ ngx_http_report_set_log(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     lmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_log_module);
 
     if(lmcf == NULL) {
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                           "report module requires log module to be compiled in");
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,"report module requires log module to be compiled in");
         return NGX_CONF_ERROR;
     }
 
     for(i=1;i<args_num-1;i++){
     	ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "#log url:%s",value[i].data);
-		log = ngx_array_push(flcf->logs);
+		log = ngx_array_push(flcf->reports);
 		if (log == NULL) {
 			return NGX_CONF_ERROR;
 		}
